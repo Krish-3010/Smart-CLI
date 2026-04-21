@@ -143,3 +143,7 @@ Smart CLI/
 B.Tech Computer Science Engineering | Nirma University  
 📧 krishmojidra3010@gmail.com  
 
+---
+
+> ⭐ If you found this project useful or interesting, please consider giving it a star!
+
