@@ -1,20 +1,80 @@
 #include<bits/stdc++.h>
 #include<fstream>
 #include<sstream>
+
+#ifdef _WIN32
+#include<windows.h>
+#include<conio.h>
+#ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
+#define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
+#endif
+#else
 #include<termios.h>
 #include<unistd.h>
 #include<sys/ioctl.h>
+#endif
+
 using namespace std;
+
+#ifdef _WIN32
+void enableANSI() {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    GetConsoleMode(hOut, &mode);
+    SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+}
+void setRawMode(bool) {}
+int readKey() {
+    int c = _getch();
+    if (c == 0 || c == 224) {
+        int c2 = _getch();
+        if (c2 == 72) return 1000;
+        if (c2 == 80) return 1001;
+        return -1;
+    }
+    return c;
+}
+#else
+void enableANSI() {}
+void setRawMode(bool enable) {
+    static struct termios oldt;
+    if (enable) {
+        tcgetattr(STDIN_FILENO, &oldt);
+        struct termios newt = oldt;
+        newt.c_lflag &= ~(ICANON | ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    } else {
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    }
+}
+int readKey() {
+    int c = getchar();
+    if (c == 27) {
+        int seq1 = getchar();
+        if (seq1 == '[') {
+            int seq2 = getchar();
+            if (seq2 == 'A') return 1000;
+            if (seq2 == 'B') return 1001;
+        }
+        return -1;
+    }
+    return c;
+}
+#endif
+
 struct TrieNode {
     unordered_map<char, TrieNode*> children;
     bool isEnd;
     int freq;
     TrieNode() : isEnd(false), freq(0) {}
 };
+
 struct Trie {
     TrieNode* root;
     unordered_map<string, int> freqMap;
+
     Trie() { root = new TrieNode(); }
+
     void insert(const string& word) {
         freqMap[word]++;
         TrieNode* cur = root;
@@ -26,12 +86,14 @@ struct Trie {
         cur->isEnd = true;
         cur->freq = freqMap[word];
     }
+
     void collectAll(TrieNode* node, string current, vector<pair<int,string>>& results) {
         if (node->isEnd)
             results.push_back({node->freq, current});
         for (auto& p : node->children)
             collectAll(p.second, current + p.first, results);
     }
+
     string predict(const string& prefix) {
         TrieNode* cur = root;
         for (char c : prefix) {
@@ -46,41 +108,34 @@ struct Trie {
         });
         return results[0].second;
     }
+
     void load(const string& histFile) {
         ifstream f(histFile);
         string line;
-        while (getline(f, line)) {
+        while (getline(f, line))
             if (!line.empty()) insert(line);
-        }
     }
+
     void save(const string& histFile) {
         ofstream f(histFile);
-        for (auto& p : freqMap) {
+        for (auto& p : freqMap)
             for (int i = 0; i < p.second; i++)
                 f << p.first << "\n";
-        }
     }
 };
-void setRawMode(bool enable) {
-    static struct termios oldt;
-    if (enable) {
-        tcgetattr(STDIN_FILENO, &oldt);
-        struct termios newt = oldt;
-        newt.c_lflag &= ~(ICANON | ECHO);
-        tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-    } else {
-        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-    }
-}
+
 string readLineWithPrediction(Trie& trie, vector<string>& history) {
     string input = "";
     string suggestion = "";
     int histIdx = (int)history.size();
+
     setRawMode(true);
+
     auto clearLine = [&]() {
-        int total = 1 + input.size() + suggestion.size();
-        for (int i = 0; i < (int)total; i++) cout << "\b \b";
+        int total = 1 + (int)input.size() + (int)suggestion.size();
+        for (int i = 0; i < total; i++) cout << "\b \b";
     };
+
     auto redraw = [&]() {
         cout << "\r>";
         cout << input;
@@ -91,11 +146,13 @@ string readLineWithPrediction(Trie& trie, vector<string>& history) {
         }
         cout.flush();
     };
+
     while (true) {
-        char c = getchar();
+        int c = readKey();
+
         if (c == '\n' || c == '\r') {
             if (!suggestion.empty() && suggestion.size() > input.size()) {
-                int suf = suggestion.size() - input.size();
+                int suf = (int)suggestion.size() - (int)input.size();
                 for (int i = 0; i < suf; i++) cout << " ";
             }
             cout << "\n";
@@ -107,73 +164,63 @@ string readLineWithPrediction(Trie& trie, vector<string>& history) {
                 suggestion = "";
                 redraw();
             }
-        } else if (c == 127 || c == '\b') {
+        } else if (c == 127 || c == '\b' || c == 8) {
             if (!input.empty()) {
                 clearLine();
                 input.pop_back();
                 string firstToken = "";
                 stringstream ss(input);
                 ss >> firstToken;
-                if (!firstToken.empty())
-                    suggestion = trie.predict(firstToken);
-                else
-                    suggestion = "";
+                suggestion = firstToken.empty() ? "" : trie.predict(firstToken);
                 redraw();
             }
-        } else if (c == 27) {
-            char seq1 = getchar();
-            if (seq1 == '[') {
-                char seq2 = getchar();
-                if (seq2 == 'A') {
-                    if (!history.empty() && histIdx > 0) {
-                        histIdx--;
-                        clearLine();
-                        input = history[histIdx];
-                        suggestion = "";
-                        redraw();
-                    }
-                } else if (seq2 == 'B') {
-                    if (histIdx < (int)history.size() - 1) {
-                        histIdx++;
-                        clearLine();
-                        input = history[histIdx];
-                        suggestion = "";
-                        redraw();
-                    } else {
-                        histIdx = (int)history.size();
-                        clearLine();
-                        input = "";
-                        suggestion = "";
-                        redraw();
-                    }
-                }
+        } else if (c == 1000) {
+            if (!history.empty() && histIdx > 0) {
+                histIdx--;
+                clearLine();
+                input = history[histIdx];
+                suggestion = "";
+                redraw();
             }
-        } else {
+        } else if (c == 1001) {
+            if (histIdx < (int)history.size() - 1) {
+                histIdx++;
+                clearLine();
+                input = history[histIdx];
+                suggestion = "";
+                redraw();
+            } else {
+                histIdx = (int)history.size();
+                clearLine();
+                input = "";
+                suggestion = "";
+                redraw();
+            }
+        } else if (c >= 32 && c < 127) {
             clearLine();
-            input += c;
+            input += (char)c;
             histIdx = (int)history.size();
             string firstToken = "";
             stringstream ss(input);
             ss >> firstToken;
-            if (!firstToken.empty())
-                suggestion = trie.predict(firstToken);
-            else
-                suggestion = "";
+            suggestion = firstToken.empty() ? "" : trie.predict(firstToken);
             redraw();
         }
     }
+
     setRawMode(false);
     return input;
 }
+
 void echo(vector<string>& tokens) {
     for (int i = 1; i < (int)tokens.size(); i++) {
-        for (char ch : tokens[i]) {
+        for (char ch : tokens[i])
             if (ch != '"') cout << ch;
-        }
         if (i != (int)tokens.size() - 1) cout << " ";
     }
     cout << "\n";
 }
+
 void cat(vector<string>& tokens) {
     if (tokens.size() < 2) { cout << "cat: missing file operand\n"; return; }
     for (int i = 1; i < (int)tokens.size(); i++) {
@@ -183,6 +230,7 @@ void cat(vector<string>& tokens) {
         while (getline(f, line)) cout << line << "\n";
     }
 }
+
 void touch(vector<string>& tokens) {
     if (tokens.size() < 2) { cout << "touch: missing file operand\n"; return; }
     for (int i = 1; i < (int)tokens.size(); i++) {
@@ -190,6 +238,7 @@ void touch(vector<string>& tokens) {
         if (!f) cout << "touch: cannot create file '" << tokens[i] << "'\n";
     }
 }
+
 void head(vector<string>& tokens) {
     int n = 10;
     string filename = "";
@@ -207,6 +256,7 @@ void head(vector<string>& tokens) {
     int cnt = 0;
     while (cnt < n && getline(f, line)) { cout << line << "\n"; cnt++; }
 }
+
 void tail(vector<string>& tokens) {
     int n = 10;
     string filename = "";
@@ -226,6 +276,7 @@ void tail(vector<string>& tokens) {
     int start = max(0, (int)lines.size() - n);
     for (int i = start; i < (int)lines.size(); i++) cout << lines[i] << "\n";
 }
+
 void nl(vector<string>& tokens) {
     if (tokens.size() < 2) { cout << "nl: missing file operand\n"; return; }
     ifstream f(tokens[1]);
@@ -237,24 +288,24 @@ void nl(vector<string>& tokens) {
         else cout << "\n";
     }
 }
+
 void wc(vector<string>& tokens) {
     if (tokens.size() < 2) { cout << "wc: missing file operand\n"; return; }
     string filename = tokens.back();
-    bool countLines = false, countWords = false, countChars = false;
-    bool flagGiven = false;
+    bool countLines = false, countWords = false, countChars = false, flagGiven = false;
     for (int i = 1; i < (int)tokens.size() - 1; i++) {
         if (tokens[i] == "-l") { countLines = true; flagGiven = true; }
         else if (tokens[i] == "-w") { countWords = true; flagGiven = true; }
         else if (tokens[i] == "-c") { countChars = true; flagGiven = true; }
     }
-    if (!flagGiven) { countLines = countWords = countChars = true; }
+    if (!flagGiven) countLines = countWords = countChars = true;
     ifstream f(filename);
     if (!f) { cout << "wc: " << filename << ": No such file or directory\n"; return; }
     int lines = 0, words = 0, chars = 0;
     string line;
     while (getline(f, line)) {
         lines++;
-        chars += line.size() + 1;
+        chars += (int)line.size() + 1;
         stringstream ss(line);
         string w;
         while (ss >> w) words++;
@@ -264,6 +315,7 @@ void wc(vector<string>& tokens) {
     if (countChars) cout << "\t" << chars;
     cout << "\t" << filename << "\n";
 }
+
 void bc(vector<string>& tokens) {
     if (tokens.size() < 2) { cout << "bc: missing expression\n"; return; }
     string expr = "";
@@ -281,6 +333,7 @@ void bc(vector<string>& tokens) {
         if (op == '/') return (b == 0) ? 0 : a / b;
         return 0;
     };
+
     stack<double> vals;
     stack<char> ops;
     int i = 0;
@@ -328,6 +381,7 @@ void bc(vector<string>& tokens) {
         else cout << fixed << setprecision(6) << result << "\n";
     }
 }
+
 void exprCmd(vector<string>& tokens) {
     if (tokens.size() < 4) { cout << "expr: missing operands\n"; return; }
     long long a, b;
@@ -341,6 +395,7 @@ void exprCmd(vector<string>& tokens) {
     else if (op == "%") { if (b == 0) cout << "expr: division by zero\n"; else cout << a % b << "\n"; }
     else cout << "expr: unknown operator '" << op << "'\n";
 }
+
 void fact(vector<string>& tokens) {
     if (tokens.size() < 2) { cout << "factor: missing number\n"; return; }
     long long n;
@@ -349,18 +404,15 @@ void fact(vector<string>& tokens) {
     if (n <= 0) { cout << "factor: argument must be positive\n"; return; }
     cout << n << ":";
     long long temp = n;
-    for (long long i = 2; i * i <= temp; i++) {
+    for (long long i = 2; i * i <= temp; i++)
         while (temp % i == 0) { cout << " " << i; temp /= i; }
-    }
     if (temp > 1) cout << " " << temp;
     cout << "\n";
 }
+
 void grep(vector<string>& tokens) {
-    bool caseInsensitive = false;
-    bool lineNumbers = false;
-    bool invert = false;
-    string pattern = "";
-    string filename = "";
+    bool caseInsensitive = false, lineNumbers = false, invert = false;
+    string pattern = "", filename = "";
     int argIdx = 1;
     while (argIdx < (int)tokens.size()) {
         if (tokens[argIdx] == "-i") { caseInsensitive = true; argIdx++; }
@@ -372,10 +424,10 @@ void grep(vector<string>& tokens) {
     if (pattern.empty() || filename.empty()) { cout << "Usage: grep [-i] [-n] [-v] <pattern> <file>\n"; return; }
     ifstream f(filename);
     if (!f) { cout << "grep: " << filename << ": No such file or directory\n"; return; }
+    string searchPattern = pattern;
+    if (caseInsensitive) for (char& c : searchPattern) c = tolower(c);
     string line;
     int lineNum = 0;
-    string searchPattern = caseInsensitive ? pattern : pattern;
-    if (caseInsensitive) for (char& c : searchPattern) c = tolower(c);
     while (getline(f, line)) {
         lineNum++;
         string searchLine = line;
@@ -387,10 +439,14 @@ void grep(vector<string>& tokens) {
         }
     }
 }
+
 int main() {
+    enableANSI();
+
     Trie trie;
     string histFile = ".smart_cli_history";
     trie.load(histFile);
+
     cout << "\033[1;36m";
     cout << "  ____                       _      ____ _     ___\n";
     cout << " / ___| _ __ ___   __ _ _ __| |_   / ___| |   |_ _|\n";
@@ -398,59 +454,53 @@ int main() {
     cout << "  ___) | | | | | | (_| | |  | |_  | |___| |___ | |\n";
     cout << " |____/|_| |_| |_|\\__,_|_|   \\__|  \\____|_____|___|\n";
     cout << "\033[0m";
-    cout << "\033[1;33m Welcome to Smart CLI — type 'help' to list commands\033[0m\n\n";
+    cout << "\033[1;33m Welcome to Smart CLI - type 'help' to list commands\033[0m\n\n";
+
     vector<string> history;
+
     while (true) {
         string com = readLineWithPrediction(trie, history);
         if (com.empty()) continue;
+
         stringstream ss(com);
         vector<string> tokens;
         string word;
         while (ss >> word) tokens.push_back(word);
         if (tokens.empty()) continue;
+
         history.push_back(com);
         trie.insert(tokens[0]);
         trie.save(histFile);
+
         if (tokens[0] == "exit") {
             cout << "Thanks For Using Smart CLI\n";
             return 0;
         } else if (tokens[0] == "help") {
             cout << "\n\033[1;32mAvailable Commands:\033[0m\n";
-            cout << "  echo  <text>                  — Print text\n";
-            cout << "  cat   <file>                  — Print file contents\n";
-            cout << "  touch <file>                  — Create file(s)\n";
-            cout << "  head  [-n N] <file>           — First N lines (default 10)\n";
-            cout << "  tail  [-n N] <file>           — Last N lines (default 10)\n";
-            cout << "  nl    <file>                  — Number non-empty lines\n";
-            cout << "  wc    [-l|-w|-c] <file>       — Word/line/char count\n";
-            cout << "  bc    <expression>            — Evaluate math expression\n";
-            cout << "  expr  <a> <op> <b>            — Simple arithmetic\n";
-            cout << "  factor <n>                    — Prime factorization\n";
-            cout << "  grep  [-i] [-n] [-v] <p> <f> — Search pattern in file\n";
-            cout << "  exit                          — Quit Smart CLI\n\n";
-            cout << "  \033[2mTip: Start typing a command and press TAB to autocomplete\033[0m\n\n";
-        } else if (tokens[0] == "cat") {
-            cat(tokens);
-        } else if (tokens[0] == "echo") {
-            echo(tokens);
-        } else if (tokens[0] == "touch") {
-            touch(tokens);
-        } else if (tokens[0] == "bc") {
-            bc(tokens);
-        } else if (tokens[0] == "head") {
-            head(tokens);
-        } else if (tokens[0] == "tail") {
-            tail(tokens);
-        } else if (tokens[0] == "nl") {
-            nl(tokens);
-        } else if (tokens[0] == "wc") {
-            wc(tokens);
-        } else if (tokens[0] == "expr") {
-            exprCmd(tokens);
-        } else if (tokens[0] == "factor") {
-            fact(tokens);
-        } else if (tokens[0] == "grep") {
-            grep(tokens);
+            cout << "  echo   <text>                  - Print text\n";
+            cout << "  cat    <file>                  - Print file contents\n";
+            cout << "  touch  <file>                  - Create file(s)\n";
+            cout << "  head   [-n N] <file>           - First N lines (default 10)\n";
+            cout << "  tail   [-n N] <file>           - Last N lines (default 10)\n";
+            cout << "  nl     <file>                  - Number non-empty lines\n";
+            cout << "  wc     [-l|-w|-c] <file>       - Word/line/char count\n";
+            cout << "  bc     <expression>            - Evaluate math expression\n";
+            cout << "  expr   <a> <op> <b>            - Simple arithmetic\n";
+            cout << "  factor <n>                     - Prime factorization\n";
+            cout << "  grep   [-i] [-n] [-v] <p> <f>  - Search pattern in file\n";
+            cout << "  exit                           - Quit Smart CLI\n\n";
+            cout << "  \033[2mTip: TAB to autocomplete | UP/DOWN arrows for history\033[0m\n\n";
+        } else if (tokens[0] == "cat")    { cat(tokens);
+        } else if (tokens[0] == "echo")   { echo(tokens);
+        } else if (tokens[0] == "touch")  { touch(tokens);
+        } else if (tokens[0] == "bc")     { bc(tokens);
+        } else if (tokens[0] == "head")   { head(tokens);
+        } else if (tokens[0] == "tail")   { tail(tokens);
+        } else if (tokens[0] == "nl")     { nl(tokens);
+        } else if (tokens[0] == "wc")     { wc(tokens);
+        } else if (tokens[0] == "expr")   { exprCmd(tokens);
+        } else if (tokens[0] == "factor") { fact(tokens);
+        } else if (tokens[0] == "grep")   { grep(tokens);
         } else {
             cout << "Sorry!!! We're still working on our commands... We could not find the command \""
                  << tokens[0] << "\"  Keep exploring...Keep using Smart CLI\n";
